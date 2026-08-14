@@ -205,22 +205,27 @@ class RadarStore:
             return int(row["id"]) if row else None
 
     def previous_compatible_run_id(self, run_id: int) -> int | None:
-        """Return the newest earlier run with the same research configuration.
+        ids = self.compatible_run_ids(run_id, limit=2)
+        return ids[-2] if len(ids) >= 2 else None
 
-        Growth is only meaningful when query, region/provider endpoint, and crawl
-        shape match. This prevents e.g. a Minecraft run from being compared to a
-        Bình Chánh run or a depth-0 run from being compared to depth-1.
+    def compatible_run_ids(self, run_id: int, limit: int = 10) -> list[int]:
+        """Return compatible completed runs up to ``run_id`` in chronological order.
+
+        Compatibility means the same run label/query, region, provider identity and
+        crawl shape. Fixed-cohort scans include a cohort signature in their label,
+        so compatible cohort history also implies the same explicit seed set.
         """
+        limit = max(1, int(limit))
         with self.connect() as conn:
             current = conn.execute(
                 "SELECT * FROM crawl_runs WHERE id=?", (run_id,)
             ).fetchone()
             if not current:
-                return None
-            row = conn.execute(
+                return []
+            rows = conn.execute(
                 """
                 SELECT id FROM crawl_runs
-                WHERE status='done' AND id < ?
+                WHERE status='done' AND id <= ?
                   AND query IS ?
                   AND region IS ?
                   AND instance IS ?
@@ -228,7 +233,7 @@ class RadarStore:
                   AND depth IS ?
                   AND recs_per_video IS ?
                   AND max_videos IS ?
-                ORDER BY id DESC LIMIT 1
+                ORDER BY id DESC LIMIT ?
                 """,
                 (
                     run_id,
@@ -239,14 +244,23 @@ class RadarStore:
                     current["depth"],
                     current["recs_per_video"],
                     current["max_videos"],
+                    limit,
                 ),
-            ).fetchone()
-            return int(row["id"]) if row else None
+            ).fetchall()
+            return [int(row["id"]) for row in reversed(rows)]
 
     def get_run(self, run_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM crawl_runs WHERE id=?", (run_id,)).fetchone()
             return dict(row) if row else None
+
+    def seed_ids_for_run(self, run_id: int) -> set[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT video_id FROM run_videos WHERE run_id=? AND role='seed'",
+                (run_id,),
+            ).fetchall()
+            return {str(row["video_id"]) for row in rows}
 
     def fetch_edges(self, run_id: int) -> list[dict[str, Any]]:
         with self.connect() as conn:
