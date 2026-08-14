@@ -81,6 +81,7 @@ class RadarTest(unittest.TestCase):
         leader = report["recommendation_leaders"][0]
         self.assertEqual(leader["video_id"], "X")
         self.assertEqual(leader["recommended_by"], 2)
+        self.assertEqual(leader["support_rate_pct"], 100.0)
         self.assertEqual(report["summary"]["edges"], 4)
         self.assertEqual(report["summary"]["seeds_found"], 3)
         self.assertEqual(report["summary"]["seed_sources_success"], 2)
@@ -94,7 +95,6 @@ class RadarTest(unittest.TestCase):
             config,
         ).scan_query("topic")
 
-        # Same config/query: valid comparison. X grows from 2 sources to 3.
         second = RecommendationCrawler(
             FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "C": ["X", "W"]}),
             self.store,
@@ -104,12 +104,13 @@ class RadarTest(unittest.TestCase):
         report = analyze(self.store, second, top_n=10)
         x = next(x for x in report["recommendation_leaders"] if x["video_id"] == "X")
         self.assertEqual(report["previous_run_id"], first)
+        self.assertEqual(report["summary"]["seed_overlap"], 3)
+        self.assertEqual(report["summary"]["comparable_seed_sources"], 3)
         self.assertEqual(x["previous_recommended_by"], 2)
-        self.assertEqual(x["recommended_by"], 3)
+        self.assertEqual(x["comparable_current_recommended_by"], 3)
         self.assertEqual(x["delta"], 1)
         self.assertEqual(x["growth_pct"], 50.0)
 
-        # Different query must not be compared to the preceding run.
         third = RecommendationCrawler(
             FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "C": ["X", "W"]}),
             self.store,
@@ -120,6 +121,32 @@ class RadarTest(unittest.TestCase):
         third_x = next(x for x in third_report["recommendation_leaders"] if x["video_id"] == "X")
         self.assertIsNone(third_x["previous_recommended_by"])
         self.assertIsNone(third_x["growth_pct"])
+
+    def test_seed_set_change_does_not_create_false_growth(self):
+        config = CrawlConfig(seed_limit=3, depth=0, recs_per_video=2, max_videos=10, delay=0)
+        first = RecommendationCrawler(
+            FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "C": ["Q", "W"]}),
+            self.store,
+            config,
+        ).scan_query("stable")
+
+        # The new third seed D also recommends X. Raw refs rise 2 -> 3, but A/B are
+        # the only common successful seed sources and they did not change.
+        second = RecommendationCrawler(
+            FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "D": ["X", "W"]}),
+            self.store,
+            config,
+        ).scan_query("stable")
+
+        report = analyze(self.store, second, top_n=10)
+        x = next(x for x in report["recommendation_leaders"] if x["video_id"] == "X")
+        self.assertEqual(report["previous_run_id"], first)
+        self.assertEqual(report["summary"]["seed_overlap"], 2)
+        self.assertEqual(report["summary"]["comparable_seed_sources"], 2)
+        self.assertEqual(x["recommended_by"], 3)
+        self.assertEqual(x["previous_recommended_by"], 2)
+        self.assertEqual(x["comparable_current_recommended_by"], 2)
+        self.assertEqual(x["growth_pct"], 0.0)
 
 
 if __name__ == "__main__":
