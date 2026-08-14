@@ -5,7 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .invidious import InvidiousClient, InvidiousError
+from .provider import ProviderError, RecommendationProvider
 from .store import RadarStore
 
 
@@ -19,7 +19,12 @@ class CrawlConfig:
 
 
 class RecommendationCrawler:
-    def __init__(self, client: InvidiousClient, store: RadarStore, config: CrawlConfig) -> None:
+    def __init__(
+        self,
+        client: RecommendationProvider,
+        store: RadarStore,
+        config: CrawlConfig,
+    ) -> None:
         self.client = client
         self.store = store
         self.config = config
@@ -66,7 +71,8 @@ class RecommendationCrawler:
                     video, recs = self.client.recommendations(
                         source_id, self.config.recs_per_video
                     )
-                except InvidiousError:
+                except ProviderError as exc:
+                    print(f"WARN provider failed for {source_id}: {exc}")
                     fetched.add(source_id)
                     continue
 
