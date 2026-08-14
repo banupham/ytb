@@ -31,9 +31,9 @@ def extract_video_id(href: str | None) -> str | None:
 class YouTubeBrowserProvider:
     """Observe YouTube search and Watch Next recommendations in a real browser.
 
-    This provider intentionally reads what a normal YouTube watch page renders. It
-    does not claim the result is universal across users; it is one observation from
-    the browser/session/context used for the crawl.
+    By default each watch page is opened in a fresh browser context. This prevents
+    the crawler's earlier seed visits from training the same temporary YouTube
+    session and contaminating later Watch Next observations.
     """
 
     region: str = "VN"
@@ -41,12 +41,35 @@ class YouTubeBrowserProvider:
     headless: bool = True
     browser_channel: str = "auto"
     locale: str = "vi-VN"
+    isolate_watch_context: bool = True
     base_url: str = "https://www.youtube.com"
     _playwright: Any = field(default=None, init=False, repr=False)
     _browser: Any = field(default=None, init=False, repr=False)
     _context: Any = field(default=None, init=False, repr=False)
     _page: Any = field(default=None, init=False, repr=False)
     _active_channel: str | None = field(default=None, init=False)
+
+    @property
+    def run_identity(self) -> str:
+        mode = "isolated-watch" if self.isolate_watch_context else "shared-session"
+        return f"youtube-browser:{mode}:{self.base_url}"
+
+    def _make_context_page(self) -> tuple[Any, Any]:
+        if self._browser is None:
+            raise ProviderError("Browser is not started")
+        context = self._browser.new_context(
+            locale=self.locale,
+            viewport={"width": 1440, "height": 1000},
+        )
+        context.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in {"image", "media", "font"}
+            else route.continue_(),
+        )
+        page = context.new_page()
+        page.set_default_timeout(max(1000, int(self.timeout * 1000)))
+        return context, page
 
     def _start(self) -> None:
         if self._page is not None:
@@ -82,18 +105,7 @@ class YouTubeBrowserProvider:
                 + " | ".join(errors)
             )
 
-        self._context = self._browser.new_context(
-            locale=self.locale,
-            viewport={"width": 1440, "height": 1000},
-        )
-        self._context.route(
-            "**/*",
-            lambda route: route.abort()
-            if route.request.resource_type in {"image", "media", "font"}
-            else route.continue_(),
-        )
-        self._page = self._context.new_page()
-        self._page.set_default_timeout(max(1000, int(self.timeout * 1000)))
+        self._context, self._page = self._make_context_page()
 
     def close(self) -> None:
         for obj in (self._context, self._browser):
@@ -182,27 +194,19 @@ class YouTubeBrowserProvider:
             "region": self.region,
             "browserChannel": self._active_channel,
             "headless": self.headless,
-            "title": self._page.title(),
+            "isolateWatchContext": self.isolate_watch_context,
         }
 
-    def search_videos(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        if limit <= 0:
-            return []
-        self._goto(self._url("/results", {"search_query": query}))
-        selector = "ytd-video-renderer"
-        try:
-            self._page.locator(selector).first.wait_for(
-                state="attached", timeout=max(1500, int(self.timeout * 1000))
-            )
-        except Exception:
-            self._detect_block_page()
-            raise ProviderError(f"YouTube search returned no video results for query: {query}")
-
-        results: list[dict[str, Any]] = []
-        seen: set[str] = set()
+    def _collect_search_results(
+        self,
+        selector: str,
+        results: list[dict[str, Any]],
+        seen: set[str],
+        limit: int,
+    ) -> None:
         for card in self._page.locator(selector).all():
             if len(results) >= limit:
-                break
+                return
             try:
                 title_link = card.locator("a#video-title").first
                 href = title_link.get_attribute("href")
@@ -234,6 +238,46 @@ class YouTubeBrowserProvider:
                 seen.add(video_id)
             except Exception:
                 continue
+
+    def search_videos(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        self._goto(self._url("/results", {"search_query": query}))
+        selector = "ytd-video-renderer"
+        try:
+            self._page.locator(selector).first.wait_for(
+                state="attached", timeout=max(1500, int(self.timeout * 1000))
+            )
+        except Exception:
+            self._detect_block_page()
+            raise ProviderError(f"YouTube search returned no video results for query: {query}")
+
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        stagnant_rounds = 0
+
+        # YouTube search lazy-loads more ordinary video cards while scrolling. The
+        # previous implementation only read the first DOM batch, which made an
+        # identical seed_limit produce 12 seeds in one run and 15 in another.
+        for _round in range(10):
+            before = len(results)
+            self._collect_search_results(selector, results, seen, limit)
+            if len(results) >= limit:
+                break
+
+            if len(results) == before:
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+            if stagnant_rounds >= 2:
+                break
+
+            try:
+                self._page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+                self._page.wait_for_timeout(900)
+            except Exception:
+                break
+
         if not results:
             raise ProviderError(
                 f"Could not extract YouTube video IDs from search results: {query}"
@@ -241,12 +285,6 @@ class YouTubeBrowserProvider:
         return results
 
     def _wait_for_watch_next_links(self) -> None:
-        """Wait for any watch link inside the recommendation/secondary column.
-
-        YouTube has moved from `ytd-compact-video-renderer` to newer lockup view
-        models on some layouts. The stable signal we care about is therefore a
-        `/watch?v=` link inside the related/secondary area, not one renderer tag.
-        """
         try:
             self._page.wait_for_function(
                 """
@@ -261,16 +299,9 @@ class YouTubeBrowserProvider:
                 timeout=max(3000, min(int(self.timeout * 1000), 10000)),
             )
         except Exception:
-            # Extraction below emits useful selector diagnostics.
             pass
 
     def _watch_next_records(self) -> list[dict[str, Any]]:
-        """Extract recommendation-like watch links without depending on one renderer.
-
-        Preference order is #related, the classic Watch Next renderer, then the
-        secondary column. If YouTube changes the component tag but keeps normal
-        watch links, this still works.
-        """
         return self._page.evaluate(
             """
             () => {
@@ -359,8 +390,8 @@ class YouTubeBrowserProvider:
         except Exception as exc:
             return {"diagnostic_error": str(exc)}
 
-    def recommendations(
-        self, video_id: str, limit: int = 20
+    def _recommendations_on_current_page(
+        self, video_id: str, limit: int
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         self._goto(self._url("/watch", {"v": video_id}))
 
@@ -408,11 +439,9 @@ class YouTubeBrowserProvider:
         for record in raw_records:
             if len(recs) >= limit:
                 break
-            href = record.get("href")
-            target_id = extract_video_id(href)
+            target_id = extract_video_id(record.get("href"))
             if not target_id or target_id in seen:
                 continue
-
             title_text = str(record.get("title") or "").strip()
             rec_author = str(record.get("author") or "").strip() or None
             recs.append(
@@ -434,3 +463,27 @@ class YouTubeBrowserProvider:
                 f"for {video_id}. DOM diagnostics: {diagnostics}"
             )
         return source, recs
+
+    def recommendations(
+        self, video_id: str, limit: int = 20
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        self._start()
+        if not self.isolate_watch_context:
+            return self._recommendations_on_current_page(video_id, limit)
+
+        original_context = self._context
+        original_page = self._page
+        temp_context = None
+        try:
+            temp_context, temp_page = self._make_context_page()
+            self._context = temp_context
+            self._page = temp_page
+            return self._recommendations_on_current_page(video_id, limit)
+        finally:
+            if temp_context is not None:
+                try:
+                    temp_context.close()
+                except Exception:
+                    pass
+            self._context = original_context
+            self._page = original_page
