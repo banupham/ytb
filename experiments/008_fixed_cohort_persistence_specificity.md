@@ -124,38 +124,96 @@ This directly attacks generic recommendation noise observed in the earlier exper
 - Added persistence and contrast unit tests.
 - Project version bumped to `0.3.0`.
 
-## Live validation plan
+## Live validation
 
-### Step 1 — freeze run #9
-
-```bat
-git pull
-python -m pip install -e .
-python -m ytb_radar --db data\radar.db cohort-save ^
-  --run-id 9 ^
-  --out cohorts\minecraft_sinh_ton.json ^
-  --label "minecraft sinh tồn core"
-```
-
-Expected:
+The cohort was frozen from run #9 with:
 
 ```text
-cohort saved: ... | seeds=20 | signature=...
+label='minecraft sinh tồn core'
+seeds=20
+signature=b7aca788e993ac22
 ```
 
-### Step 2 — create fixed baseline
+### Fixed baseline — run #10
 
-Run `scan-cohort` once. This creates the first fixed-cohort baseline; growth/persistence history is not yet meaningful.
+```text
+RUN #10 | query='cohort:minecraft sinh tồn core:b7aca788e993ac22' | status=done
+videos=206 edges=229 sources=20 communities=12
+seeds_found=20 seed_fill=100.0% seed_sources_success=20 seed_sources_failed=0
+```
 
-### Step 3 — repeat the exact cohort
+Notable targets included:
 
-Run `scan-cohort` again later without editing the JSON file or crawl parameters.
+- `ÔNG SẾP BÉO SỬU NHI SIÊU NỔI LOẠN` — 25% support;
+- Roblox shooting-game challenge — 25%;
+- hotel-food challenge — 20%;
+- `100 Ngày Ở Vùng Lạnh Nhất Trong Minecraft Hardcore` — 15%;
+- Minecraft zombie survival — 15%;
+- multiple 100 Days / Hardcore / survival targets at 10–15%.
 
-Then run `persistence` on the latest fixed run.
+### First exact repeat — run #11
 
-### Step 4 — controls
+```text
+RUN #11 | query='cohort:minecraft sinh tồn core:b7aca788e993ac22' | status=done
+videos=204 edges=241 sources=20 communities=11
+seeds_found=20 seed_fill=100.0% seed_sources_success=20 seed_sources_failed=0
+compared_with_compatible_run=10 seed_overlap=20 seed_jaccard=100.0% comparable_seed_sources=20
+```
 
-Collect unrelated isolated-watch depth-0 runs with ~20 successful sources, then use `contrast` against the fixed Minecraft run.
+This is the first strict apples-to-apples recommendation comparison in the project: same 20 seed IDs, same signature, same provider mode, same region, same crawl depth and recommendation count.
+
+Examples from run #11:
+
+- `ÔNG SẾP BÉO SỬU NHI SIÊU NỔI LOẠN` — 25% -> 35% support, +40% raw source count;
+- Roblox shooting-game challenge — 25% -> 30%, +20%;
+- `100 Ngày Ở Vùng Lạnh Nhất Trong Minecraft Hardcore` — 15% -> 15%, stable;
+- `Tôi Sinh Tồn 7 Ngày Tại Bắc Cực` — rose to 20%;
+- Minecraft zombie 100-day survival — rose to 20%;
+- several Minecraft / 100 Days / Hardcore targets rose into 15–20% support.
+
+Community labels remained overwhelmingly Minecraft / survival / 100 Days / Hardcore in both fixed runs.
+
+## Interpretation of runs #10 and #11
+
+### Fixed-cohort mechanism: PASS
+
+The fixed cohort retained:
+
+```text
+20/20 seeds
+100% seed overlap
+100% successful source pages
+same cohort signature
+```
+
+This removes the largest confounder found in runs #8/#9: changing YouTube Search results.
+
+### Exact recommendation state still changes meaningfully
+
+Even with identical source pages and isolated contexts, target support moves between runs. Therefore Watch Next is genuinely dynamic over time/context and should be treated as a sampled recommendation state, not a static graph.
+
+### Niche family remains stable
+
+Although exact targets rotate, the dominant content family remains strongly Minecraft / Survival / 100 Days / Hardcore. This reinforces the earlier result that format/theme-family signal is more stable than exact-video identity.
+
+### Generic / adjacent targets persist too
+
+Some non-Minecraft gaming/challenge and generic entertainment targets remain strong across both exact fixed runs. These cannot yet be called audience bridges. The contrast/control experiment is required before promotion to niche-specific signal.
+
+## Next live validation step
+
+Run persistence on the latest fixed run:
+
+```bat
+python -m ytb_radar --db data\radar.db persistence ^
+  --run-id 11 ^
+  --window 5 ^
+  --top 30
+```
+
+With only two fixed observations available, this output is an initial persistence baseline. Additional fixed scans will make the metric progressively more useful.
+
+After that, collect unrelated control runs and use `contrast` to demote generic targets.
 
 ## Success criteria
 
@@ -172,12 +230,14 @@ No threshold is treated as proof of algorithmic causation or guaranteed future d
 
 ## Remaining limitation
 
-Exact-video persistence still misses a key phenomenon already visible in runs #8/#9: the same **format family** can persist while individual video IDs rotate. Example families include `100 Days`, `Hardcore`, `Zombie`, `Ocean/Island`, and broader challenge gaming.
+Exact-video persistence still misses a key phenomenon already visible in runs #8/#9 and now #10/#11: the same **format family** can persist while individual video IDs rotate. Example families include `100 Days`, `Hardcore`, `Zombie`, `Ocean/Island`, and broader challenge gaming.
 
 After Experiment 008 validates exact fixed-cohort persistence, the next analyzer layer should aggregate semantic/format families across changing exact targets.
 
 ## Status
 
-IMPLEMENTED.
+FIXED-COHORT LIVE VALIDATION: PASS.
 
-UNIT/LIVE VALIDATION PENDING FOR THE NEW v0.3.0 COMMANDS.
+PERSISTENCE COMMAND: READY FOR LIVE VALIDATION.
+
+CONTROL CONTRAST: NOT YET VALIDATED.
