@@ -1,3 +1,3 @@
-"""YouTube recommendation radar built around Invidious observations."""
+"""YouTube recommendation radar using interchangeable observation providers."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
