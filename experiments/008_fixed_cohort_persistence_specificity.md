@@ -142,15 +142,6 @@ videos=206 edges=229 sources=20 communities=12
 seeds_found=20 seed_fill=100.0% seed_sources_success=20 seed_sources_failed=0
 ```
 
-Notable targets included:
-
-- `ÔNG SẾP BÉO SỬU NHI SIÊU NỔI LOẠN` — 25% support;
-- Roblox shooting-game challenge — 25%;
-- hotel-food challenge — 20%;
-- `100 Ngày Ở Vùng Lạnh Nhất Trong Minecraft Hardcore` — 15%;
-- Minecraft zombie survival — 15%;
-- multiple 100 Days / Hardcore / survival targets at 10–15%.
-
 ### First exact repeat — run #11
 
 ```text
@@ -162,47 +153,9 @@ compared_with_compatible_run=10 seed_overlap=20 seed_jaccard=100.0% comparable_s
 
 This is the first strict apples-to-apples recommendation comparison in the project: same 20 seed IDs, same signature, same provider mode, same region, same crawl depth and recommendation count.
 
-Examples from run #11:
+## Persistence live result — runs #10 and #11
 
-- `ÔNG SẾP BÉO SỬU NHI SIÊU NỔI LOẠN` — 25% -> 35% support, +40% raw source count;
-- Roblox shooting-game challenge — 25% -> 30%, +20%;
-- `100 Ngày Ở Vùng Lạnh Nhất Trong Minecraft Hardcore` — 15% -> 15%, stable;
-- `Tôi Sinh Tồn 7 Ngày Tại Bắc Cực` — rose to 20%;
-- Minecraft zombie 100-day survival — rose to 20%;
-- several Minecraft / 100 Days / Hardcore targets rose into 15–20% support.
-
-Community labels remained overwhelmingly Minecraft / survival / 100 Days / Hardcore in both fixed runs.
-
-## Interpretation of runs #10 and #11
-
-### Fixed-cohort mechanism: PASS
-
-The fixed cohort retained:
-
-```text
-20/20 seeds
-100% seed overlap
-100% successful source pages
-same cohort signature
-```
-
-This removes the largest confounder found in runs #8/#9: changing YouTube Search results.
-
-### Exact recommendation state still changes meaningfully
-
-Even with identical source pages and isolated contexts, target support moves between runs. Therefore Watch Next is genuinely dynamic over time/context and should be treated as a sampled recommendation state, not a static graph.
-
-### Niche family remains stable
-
-Although exact targets rotate, the dominant content family remains strongly Minecraft / Survival / 100 Days / Hardcore. This reinforces the earlier result that format/theme-family signal is more stable than exact-video identity.
-
-### Generic / adjacent targets persist too
-
-Some non-Minecraft gaming/challenge and generic entertainment targets remain strong across both exact fixed runs. These cannot yet be called audience bridges. The contrast/control experiment is required before promotion to niche-specific signal.
-
-## Next live validation step
-
-Run persistence on the latest fixed run:
+Command:
 
 ```bat
 python -m ytb_radar --db data\radar.db persistence ^
@@ -211,33 +164,86 @@ python -m ytb_radar --db data\radar.db persistence ^
   --top 30
 ```
 
-With only two fixed observations available, this output is an initial persistence baseline. Additional fixed scans will make the metric progressively more useful.
+Observed:
 
-After that, collect unrelated control runs and use `contrast` to demote generic targets.
+```text
+runs=[10, 11]
+cohort=fixed
+common_seeds=20
+seed_union=20
+source_counts=[20, 20]
+```
 
-## Success criteria
+Top recurring exact targets included:
 
-Fixed-cohort phase is useful if:
+- `ÔNG SẾP BÉO SỬU NHI SIÊU NỔI LOẠN` — present 2/2, support 25% -> 35%, median 30%;
+- Roblox shooting-game challenge — 2/2, 25% -> 30%, median 27.5%;
+- Minecraft Zombie 100 Days — 2/2, support 10% -> 20%, median 15%;
+- `100 Ngày Ở Vùng Lạnh Nhất Trong Minecraft Hardcore` — 2/2, stable 15%;
+- `Tôi Sinh Tồn 7 Ngày Tại Bắc Cực` — 2/2, support 5% -> 20%;
+- multiple Minecraft 100 Days / Hardcore / extreme-environment targets recur at roughly 7.5–15% median support.
 
-- repeated scans retain exactly the same seed set/signature;
-- most/all fixed source pages succeed;
-- multiple exact targets recur across 2+ observations;
-- persistence output distinguishes recurring targets from one-run spikes;
-- control contrast demotes exact generic targets that also recur in unrelated niches;
-- Minecraft-specific / 100 Days / Hardcore / survival targets retain positive specificity.
+## Interpretation
 
-No threshold is treated as proof of algorithmic causation or guaranteed future distribution.
+### Fixed-cohort mechanism: PASS
 
-## Remaining limitation
+The fixed cohort retained exactly the same 20 sources and all source pages succeeded. This removes changing Search results as a confounder.
 
-Exact-video persistence still misses a key phenomenon already visible in runs #8/#9 and now #10/#11: the same **format family** can persist while individual video IDs rotate. Example families include `100 Days`, `Hardcore`, `Zombie`, `Ocean/Island`, and broader challenge gaming.
+### Persistence mechanism: PASS technically, but only an initial baseline
 
-After Experiment 008 validates exact fixed-cohort persistence, the next analyzer layer should aggregate semantic/format families across changing exact targets.
+With only two fixed observations, every target that appears in both runs is `2/2 = 100%`. Therefore presence percentage is not yet selective enough by itself. Three to five fixed observations will make persistence substantially more discriminating.
+
+### Exact-video persistence is not the same as niche specificity
+
+The strongest persistent exact targets currently include both clearly Minecraft-related targets and unrelated/generic entertainment targets. Therefore persistence alone cannot tell us whether a recommendation is a real Minecraft-specific signal or a platform-wide/common recommendation.
+
+This is an important result rather than a failure: it proves the next required layer is **control contrast**.
+
+### Format-family signal still looks stronger than exact-video identity
+
+Minecraft `100 Days`, `Hardcore`, `Zombie`, `Ocean/Island`, `cold/extreme environment`, and survival variants recur repeatedly across the fixed graph even while exact video IDs rotate. This remains the more promising creator-level signal.
+
+## Next live validation step
+
+Collect two unrelated isolated-watch depth-0 control runs with around 20 successful sources, for example:
+
+```bat
+python -m ytb_radar --db data\radar.db scan ^
+  --provider youtube ^
+  --query "nhạc bolero trữ tình" ^
+  --region VN ^
+  --seed-limit 20 ^
+  --depth 0 ^
+  --recs 20 ^
+  --delay 1
+```
+
+and:
+
+```bat
+python -m ytb_radar --db data\radar.db scan ^
+  --provider youtube ^
+  --query "bán nhà bình chánh" ^
+  --region VN ^
+  --seed-limit 20 ^
+  --depth 0 ^
+  --recs 20 ^
+  --delay 1
+```
+
+Then compare the latest Minecraft fixed run against those control run IDs:
+
+```bat
+python -m ytb_radar --db data\radar.db contrast ^
+  --run-id 11 ^
+  --control-run-ids CONTROL_1 CONTROL_2 ^
+  --top 30
+```
 
 ## Status
 
 FIXED-COHORT LIVE VALIDATION: PASS.
 
-PERSISTENCE COMMAND: READY FOR LIVE VALIDATION.
+PERSISTENCE LIVE VALIDATION: PASS AS INITIAL 2-RUN BASELINE.
 
-CONTROL CONTRAST: NOT YET VALIDATED.
+NICHE SPECIFICITY / CONTROL CONTRAST: NEXT REQUIRED LIVE TEST.
