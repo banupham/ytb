@@ -204,6 +204,45 @@ class RadarStore:
             ).fetchone()
             return int(row["id"]) if row else None
 
+    def previous_compatible_run_id(self, run_id: int) -> int | None:
+        """Return the newest earlier run with the same research configuration.
+
+        Growth is only meaningful when query, region/provider endpoint, and crawl
+        shape match. This prevents e.g. a Minecraft run from being compared to a
+        Bình Chánh run or a depth-0 run from being compared to depth-1.
+        """
+        with self.connect() as conn:
+            current = conn.execute(
+                "SELECT * FROM crawl_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            if not current:
+                return None
+            row = conn.execute(
+                """
+                SELECT id FROM crawl_runs
+                WHERE status='done' AND id < ?
+                  AND query IS ?
+                  AND region IS ?
+                  AND instance IS ?
+                  AND seed_limit IS ?
+                  AND depth IS ?
+                  AND recs_per_video IS ?
+                  AND max_videos IS ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (
+                    run_id,
+                    current["query"],
+                    current["region"],
+                    current["instance"],
+                    current["seed_limit"],
+                    current["depth"],
+                    current["recs_per_video"],
+                    current["max_videos"],
+                ),
+            ).fetchone()
+            return int(row["id"]) if row else None
+
     def get_run(self, run_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM crawl_runs WHERE id=?", (run_id,)).fetchone()
