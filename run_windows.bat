@@ -3,7 +3,7 @@ setlocal
 
 if "%~1"=="" (
   echo Usage: run_windows.bat search words
-  echo Example: run_windows.bat ban nha binh chanh
+  echo Example: run_windows.bat minecraft sinh ton
   exit /b 1
 )
 
@@ -13,7 +13,6 @@ if not exist .venv (
 call .venv\Scripts\activate
 python -m pip install -e .
 
-REM Default provider is now the real YouTube website through Playwright.
-REM It tries installed Google Chrome first, then Microsoft Edge.
-REM Add --headed manually if YouTube shows an anti-bot/challenge page.
-python -m ytb_radar --db data\radar.db scan --provider youtube --query "%*" --region VN --seed-limit 20 --depth 1 --recs 20 --delay 0.8
+REM Research default: real YouTube, isolated watch context per seed, direct Watch Next only.
+REM depth=0 avoids recursive topic drift; use explicit commands for deeper experiments.
+python -m ytb_radar --db data\radar.db scan --provider youtube --query "%*" --region VN --seed-limit 20 --depth 0 --recs 20 --delay 0.8
