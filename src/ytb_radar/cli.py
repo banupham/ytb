@@ -7,6 +7,7 @@ import sys
 from typing import Any
 
 from .analyzer import analyze
+from .cohort import cohort_from_run, cohort_run_label, read_cohort, write_cohort
 from .crawler import CrawlConfig, RecommendationCrawler
 from .invidious import (
     INSTANCE_DIRECTORY_URL,
@@ -15,7 +16,13 @@ from .invidious import (
     discover_public_instances,
 )
 from .provider import ProviderError, RecommendationProvider
-from .report import print_report, write_json
+from .report import (
+    print_contrast,
+    print_persistence,
+    print_report,
+    write_json,
+)
+from .signals import contrast_report, persistence_report
 from .store import RadarStore
 from .youtube_browser import YouTubeBrowserProvider
 
@@ -51,10 +58,41 @@ def build_parser() -> argparse.ArgumentParser:
     _add_provider_args(scan_ids)
     _add_crawl_args(scan_ids)
 
+    cohort_save = sub.add_parser(
+        "cohort-save", help="Freeze the seed video IDs from a completed run into JSON"
+    )
+    cohort_save.add_argument("--run-id", type=int, required=True)
+    cohort_save.add_argument("--out", required=True)
+    cohort_save.add_argument("--label", default=None)
+
+    scan_cohort = sub.add_parser(
+        "scan-cohort", help="Repeatedly crawl an exact fixed cohort from a cohort JSON file"
+    )
+    scan_cohort.add_argument("--file", required=True)
+    scan_cohort.add_argument("--label", default=None, help="Optional label override")
+    _add_provider_args(scan_cohort)
+    _add_crawl_args(scan_cohort)
+
     ana = sub.add_parser("analyze", help="Analyze a completed crawl")
     ana.add_argument("--run-id", type=int, default=None)
     ana.add_argument("--top", type=int, default=20)
     ana.add_argument("--json-out", default=None)
+
+    persistence = sub.add_parser(
+        "persistence", help="Measure recommendation persistence across compatible runs"
+    )
+    persistence.add_argument("--run-id", type=int, default=None)
+    persistence.add_argument("--window", type=int, default=5)
+    persistence.add_argument("--top", type=int, default=30)
+    persistence.add_argument("--json-out", default=None)
+
+    contrast = sub.add_parser(
+        "contrast", help="Contrast one niche run against unrelated control runs"
+    )
+    contrast.add_argument("--run-id", type=int, required=True)
+    contrast.add_argument("--control-run-ids", type=int, nargs="+", required=True)
+    contrast.add_argument("--top", type=int, default=30)
+    contrast.add_argument("--json-out", default=None)
 
     export = sub.add_parser("export", help="Export analysis JSON")
     export.add_argument("--run-id", type=int, default=None)
@@ -153,6 +191,16 @@ def _close_provider(provider: Any) -> None:
         close()
 
 
+def _crawl_config(args: argparse.Namespace, seed_limit: int | None = None) -> CrawlConfig:
+    return CrawlConfig(
+        seed_limit=max(1, seed_limit if seed_limit is not None else args.seed_limit),
+        depth=max(0, args.depth),
+        recs_per_video=max(1, args.recs),
+        max_videos=max(1, args.max_videos),
+        delay=max(0.0, args.delay),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     store = RadarStore(args.db)
@@ -175,6 +223,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
+        if args.command == "cohort-save":
+            payload = cohort_from_run(store, args.run_id, label=args.label)
+            write_cohort(payload, args.out)
+            print(
+                f"cohort saved: {args.out} | seeds={len(payload['video_ids'])} "
+                f"signature={payload['signature']}"
+            )
+            return 0
+
         if args.command == "ping":
             provider = _provider(args)
             try:
@@ -184,21 +241,29 @@ def main(argv: list[str] | None = None) -> int:
                 _close_provider(provider)
             return 0
 
-        if args.command in {"scan", "scan-ids"}:
+        if args.command in {"scan", "scan-ids", "scan-cohort"}:
+            cohort = read_cohort(args.file) if args.command == "scan-cohort" else None
+            seed_limit_override = len(cohort["video_ids"]) if cohort is not None else None
             provider = _provider(args)
             try:
-                config = CrawlConfig(
-                    seed_limit=args.seed_limit,
-                    depth=max(0, args.depth),
-                    recs_per_video=max(1, args.recs),
-                    max_videos=max(1, args.max_videos),
-                    delay=max(0.0, args.delay),
-                )
+                config = _crawl_config(args, seed_limit=seed_limit_override)
                 crawler = RecommendationCrawler(provider, store, config)
                 if args.command == "scan":
                     run_id = crawler.scan_query(args.query)
-                else:
+                elif args.command == "scan-ids":
                     run_id = crawler.scan_video_ids(args.video_ids, query=args.label)
+                else:
+                    assert cohort is not None
+                    label = args.label or cohort["label"]
+                    run_label = cohort_run_label(label, cohort["video_ids"])
+                    print(
+                        f"Fixed cohort: label={label!r} seeds={len(cohort['video_ids'])} "
+                        f"signature={cohort['signature']}",
+                        file=sys.stderr,
+                    )
+                    run_id = crawler.scan_video_ids(
+                        cohort["video_ids"], query=run_label
+                    )
             finally:
                 _close_provider(provider)
             print(f"crawl complete: run_id={run_id}")
@@ -214,14 +279,37 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\nJSON written: {args.json_out}")
             return 0
 
+        if args.command == "persistence":
+            report = persistence_report(
+                store, run_id=args.run_id, window=args.window, top_n=args.top
+            )
+            print_persistence(report)
+            if args.json_out:
+                write_json(report, args.json_out)
+                print(f"\nJSON written: {args.json_out}")
+            return 0
+
+        if args.command == "contrast":
+            report = contrast_report(
+                store,
+                target_run_id=args.run_id,
+                control_run_ids=args.control_run_ids,
+                top_n=args.top,
+            )
+            print_contrast(report)
+            if args.json_out:
+                write_json(report, args.json_out)
+                print(f"\nJSON written: {args.json_out}")
+            return 0
+
         if args.command == "export":
             report = analyze(store, run_id=args.run_id, top_n=args.top)
             write_json(report, args.out)
             print(args.out)
             return 0
 
-    except ProviderError as exc:
-        print(f"Provider error: {exc}", file=sys.stderr)
+    except (ProviderError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
