@@ -75,3 +75,58 @@ def print_expansion(report: dict[str, Any]) -> None:
             f"cross_edges={item['cross_edges']} "
             f"sources={item['unique_source_videos']} targets={item['unique_target_videos']}"
         )
+
+
+def print_persistence(report: dict[str, Any]) -> None:
+    run = report.get("run") or {}
+    run_ids = report.get("run_ids") or []
+    cohort = "fixed" if report.get("fixed_cohort") else "dynamic"
+    print(
+        f"PERSISTENCE | run=#{run.get('id')} query={run.get('query')!r} "
+        f"runs={run_ids} cohort={cohort}"
+    )
+    print(
+        f"common_seeds={report.get('common_seed_count', 0)} "
+        f"seed_union={report.get('seed_union_count', 0)} "
+        f"source_counts={report.get('source_counts', [])}"
+    )
+    if len(run_ids) < 2:
+        print("Need at least 2 compatible runs before persistence is meaningful.")
+
+    print("\nPERSISTENT RECOMMENDATION SIGNALS")
+    for idx, item in enumerate(report.get("signals") or [], start=1):
+        slope = item.get("support_slope_pp_per_run")
+        slope_text = "n/a" if slope is None else f"{slope:+.2f}pp/run"
+        median_rank = item.get("median_recommendation_rank")
+        rank_text = "n/a" if median_rank is None else f"{median_rank:.1f}"
+        print(
+            f"{idx:>2}. present={item['runs_present']}/{item['runs_total']} "
+            f"({item['presence_pct']:>5.1f}%) | "
+            f"support_now={item['current_support_pct']:>5.1f}% | "
+            f"support_med={item['median_support_when_present_pct']:>5.1f}% | "
+            f"slope={slope_text:>12} | rank_med={rank_text:>4} | "
+            f"score={item['persistence_score']:>5.1f} | {item['title'][:80]}"
+        )
+
+
+def print_contrast(report: dict[str, Any]) -> None:
+    target = report.get("target_run") or {}
+    print(
+        f"NICHE CONTRAST | target_run=#{report.get('target_run_id')} "
+        f"query={target.get('query')!r} controls={report.get('control_run_ids', [])}"
+    )
+    print(
+        f"target_sources={report.get('target_source_count', 0)} "
+        f"control_sources={report.get('control_source_counts', [])}"
+    )
+
+    print("\nNICHE-SPECIFIC RECOMMENDATION SIGNALS")
+    for idx, item in enumerate(report.get("signals") or [], start=1):
+        print(
+            f"{idx:>2}. niche={item['niche_support_pct']:>5.1f}% | "
+            f"control_avg={item['control_avg_support_pct']:>5.1f}% | "
+            f"control_max={item['control_max_support_pct']:>5.1f}% | "
+            f"specificity={item['specificity_vs_max_pp']:+6.1f}pp | "
+            f"controls_hit={item['controls_present']}/{item['controls_total']} | "
+            f"{item['title'][:80]}"
+        )
