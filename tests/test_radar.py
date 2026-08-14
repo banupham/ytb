@@ -64,11 +64,11 @@ class RadarTest(unittest.TestCase):
         x_sources = {e["source_id"] for e in edges if e["target_id"] == "X"}
         self.assertEqual(x_sources, {"A", "B", "C"})
 
-    def test_analyzer_finds_recommendation_hub(self):
+    def test_analyzer_finds_recommendation_hub_and_seed_coverage(self):
         graph = {
             "A": ["X", "Y"],
             "B": ["X", "Z"],
-            "C": ["X", "W"],
+            "C": [],
         }
         crawler = RecommendationCrawler(
             FakeClient(graph),
@@ -80,31 +80,46 @@ class RadarTest(unittest.TestCase):
 
         leader = report["recommendation_leaders"][0]
         self.assertEqual(leader["video_id"], "X")
-        self.assertEqual(leader["recommended_by"], 3)
-        self.assertGreater(leader["rank_score"], 2.9)
-        self.assertEqual(report["summary"]["edges"], 6)
+        self.assertEqual(leader["recommended_by"], 2)
+        self.assertEqual(report["summary"]["edges"], 4)
+        self.assertEqual(report["summary"]["seeds_found"], 3)
+        self.assertEqual(report["summary"]["seed_sources_success"], 2)
+        self.assertEqual(report["summary"]["seed_sources_failed"], 1)
 
-    def test_analyzer_compares_runs_for_expansion(self):
+    def test_analyzer_compares_only_compatible_runs(self):
+        config = CrawlConfig(seed_limit=3, depth=0, recs_per_video=2, max_videos=10, delay=0)
         first = RecommendationCrawler(
-            FakeClient({"A": ["X", "Y"], "B": ["X", "Z"]}),
+            FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "C": ["Q", "W"]}),
             self.store,
-            CrawlConfig(seed_limit=2, depth=0, recs_per_video=2, max_videos=10, delay=0),
+            config,
         ).scan_query("topic")
 
+        # Same config/query: valid comparison. X grows from 2 sources to 3.
         second = RecommendationCrawler(
             FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "C": ["X", "W"]}),
             self.store,
-            CrawlConfig(seed_limit=3, depth=0, recs_per_video=2, max_videos=10, delay=0),
+            config,
         ).scan_query("topic")
 
         report = analyze(self.store, second, top_n=10)
         x = next(x for x in report["recommendation_leaders"] if x["video_id"] == "X")
-
         self.assertEqual(report["previous_run_id"], first)
         self.assertEqual(x["previous_recommended_by"], 2)
         self.assertEqual(x["recommended_by"], 3)
         self.assertEqual(x["delta"], 1)
         self.assertEqual(x["growth_pct"], 50.0)
+
+        # Different query must not be compared to the preceding run.
+        third = RecommendationCrawler(
+            FakeClient({"A": ["X", "Y"], "B": ["X", "Z"], "C": ["X", "W"]}),
+            self.store,
+            config,
+        ).scan_query("different topic")
+        third_report = analyze(self.store, third, top_n=10)
+        self.assertIsNone(third_report["previous_run_id"])
+        third_x = next(x for x in third_report["recommendation_leaders"] if x["video_id"] == "X")
+        self.assertIsNone(third_x["previous_recommended_by"])
+        self.assertIsNone(third_x["growth_pct"])
 
 
 if __name__ == "__main__":
