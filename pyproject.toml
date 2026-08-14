@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ytb-radar"
+version = "0.1.0"
+description = "Experimental YouTube recommendation graph radar using Invidious observations"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "networkx>=3.2,<4"
+]
+
+[project.scripts]
+ytb-radar = "ytb_radar.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
