@@ -19,6 +19,8 @@ The project does **not** claim to reverse-engineer or guarantee YouTube recommen
 - Find bridge candidates between communities.
 - List cross-community paths as **expansion opportunities**.
 - Export a JSON report for a future dashboard/model.
+- Auto-discover public Invidious instances from the official instance directory and probe fallback candidates.
+- Still allow a specific instance to be pinned for repeatable research.
 
 ## Important interpretation rule
 
@@ -31,7 +33,9 @@ It does **not** mean every YouTube user sees B, and it does not prove why YouTub
 ## Requirements
 
 - Python 3.10+
-- An Invidious instance. Prefer self-hosting for repeatable research; public instances can be unstable or rate-limited.
+- Network access to an Invidious instance.
+
+Public Invidious instances can be unstable, rate-limited, protected by anti-bot systems, or have `/api/v1/videos` disabled. Auto mode handles discovery/fallback, but self-hosting or pinning a known-working instance is preferred for repeatable research.
 
 Install:
 
@@ -43,18 +47,38 @@ py -m venv .venv
 python -m pip install -e .
 ```
 
-Set your instance on Windows CMD:
+## Instance selection
+
+The normal case no longer requires `YTB_INVIDIOUS_BASE`.
 
 ```bat
-set YTB_INVIDIOUS_BASE=https://YOUR-INVIDIOUS-INSTANCE
 set YTB_REGION=VN
-```
-
-Check it:
-
-```bat
 python -m ytb_radar ping
 ```
+
+When no instance is configured, `ytb-radar`:
+
+1. reads `https://api.invidious.io/instances.json`;
+2. keeps healthy HTTPS candidates;
+3. prioritizes instances advertising API support and better uptime;
+4. probes the actual `/api/v1/videos/:id` endpoint;
+5. falls back to the next candidate if a server is blocked, disabled or invalid.
+
+Inspect candidates:
+
+```bat
+python -m ytb_radar instances
+```
+
+For controlled/repeatable research, or if no public instance currently exposes the video API, pin a known-working/self-hosted instance:
+
+```bat
+set YTB_INVIDIOUS_BASE=http://127.0.0.1:3000
+set YTB_REGION=VN
+python -m ytb_radar ping
+```
+
+`--instance URL` overrides automatic selection for a single command.
 
 ## First real experiment
 
@@ -109,7 +133,7 @@ python -m ytb_radar --db data\radar.db scan-ids VIDEO_ID_1 VIDEO_ID_2 VIDEO_ID_3
   --recs 20
 ```
 
-For a quick Windows wrapper after setting `YTB_INVIDIOUS_BASE`:
+Quick Windows wrapper; no instance setup is required unless auto mode cannot find a usable public API:
 
 ```bat
 run_windows.bat minecraft sinh tồn
@@ -150,29 +174,35 @@ This is a **research lead**: inspect bridge videos connecting those groups and t
 ## Architecture
 
 ```text
-Invidious
-   |
-   +-- search --------------------+
-   |                              |
-   +-- /api/v1/videos/:id         |
-             |                    |
-             +-- recommendedVideos|
-                                  v
-                         RecommendationCrawler
-                                  |
-                                  v
-                               SQLite
-                                  |
-                                  v
-                         Graph Analyzer
-                 +----------------+----------------+
-                 |                |                |
-              leaders         communities       bridges
-                 |                |                |
-                 +----------------+----------------+
-                                  |
-                                  v
-                       expansion opportunities
+Official Invidious directory
+        |
+        v
+ instance discovery + probe/fallback
+        |
+        v
+    Invidious
+       |
+       +-- search --------------------+
+       |                              |
+       +-- /api/v1/videos/:id         |
+                 |                    |
+                 +-- recommendedVideos|
+                                      v
+                             RecommendationCrawler
+                                      |
+                                      v
+                                   SQLite
+                                      |
+                                      v
+                             Graph Analyzer
+                     +----------------+----------------+
+                     |                |                |
+                  leaders         communities       bridges
+                     |                |                |
+                     +----------------+----------------+
+                                      |
+                                      v
+                           expansion opportunities
 ```
 
 ## Test suite
@@ -181,7 +211,7 @@ Invidious
 python -m unittest discover -s tests -v
 ```
 
-The first offline validation contains four tests covering the documented recommendation field, edge collection, hub detection, and run-to-run expansion measurement. See `experiments/001_mvp_offline_validation.md`.
+The offline suite covers the documented recommendation field, instance-directory filtering, instance fallback, edge collection, hub detection, and run-to-run expansion measurement. See `experiments/001_mvp_offline_validation.md` and `experiments/002_auto_instance_selection.md`.
 
 ## Current boundary
 
