@@ -1,9 +1,9 @@
 @echo off
 setlocal
-if "%YTB_INVIDIOUS_BASE%"=="" (
-  echo Set YTB_INVIDIOUS_BASE first.
-  echo Example:
-  echo   set YTB_INVIDIOUS_BASE=https://YOUR-INVIDIOUS-INSTANCE
+
+if "%~1"=="" (
+  echo Usage: run_windows.bat search words
+  echo Example: run_windows.bat minecraft sinh ton
   exit /b 1
 )
 
@@ -12,4 +12,7 @@ if not exist .venv (
 )
 call .venv\Scripts\activate
 python -m pip install -e .
+
+REM YTB_INVIDIOUS_BASE is optional.
+REM If it is unset, ytb-radar discovers official public instances and probes them.
 python -m ytb_radar --db data\radar.db scan --query "%*" --region VN --seed-limit 20 --depth 1 --recs 20
