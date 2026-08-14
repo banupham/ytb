@@ -85,6 +85,15 @@ def _add_provider_args(parser: argparse.ArgumentParser) -> None:
         help="youtube provider: show the browser window instead of headless mode",
     )
     parser.add_argument(
+        "--shared-session",
+        action="store_true",
+        default=os.environ.get("YTB_SHARED_SESSION", "").lower() in {"1", "true", "yes"},
+        help=(
+            "youtube provider: reuse one temporary YouTube session across source videos. "
+            "Default is isolated watch contexts to reduce crawl-history contamination."
+        ),
+    )
+    parser.add_argument(
         "--instance",
         default=os.environ.get("YTB_INVIDIOUS_BASE"),
         help="invidious provider: pin one base URL; otherwise auto-probe public instances",
@@ -106,15 +115,18 @@ def _add_crawl_args(parser: argparse.ArgumentParser) -> None:
 
 def _provider(args: argparse.Namespace) -> RecommendationProvider:
     if args.provider == "youtube":
+        isolated = not args.shared_session
         provider = YouTubeBrowserProvider(
             region=args.region,
             timeout=args.timeout,
             headless=not args.headed,
             browser_channel=args.browser_channel,
+            isolate_watch_context=isolated,
         )
         mode = "headed" if args.headed else "headless"
+        session_mode = "isolated-watch" if isolated else "shared-session"
         print(
-            f"Provider: YouTube browser ({mode}, channel={args.browser_channel}, region={args.region})",
+            f"Provider: YouTube browser ({mode}, {session_mode}, channel={args.browser_channel}, region={args.region})",
             file=sys.stderr,
         )
         return provider
