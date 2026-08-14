@@ -8,12 +8,14 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from .provider import ProviderError
+
 
 INSTANCE_DIRECTORY_URL = "https://api.invidious.io/instances.json"
 DEFAULT_PROBE_VIDEO_ID = "dQw4w9WgXcQ"
 
 
-class InvidiousError(RuntimeError):
+class InvidiousError(ProviderError):
     """Raised when an Invidious request cannot be completed."""
 
 
@@ -118,12 +120,7 @@ def discover_public_instances(
     directory_url: str = INSTANCE_DIRECTORY_URL,
     timeout: float = 8.0,
 ) -> list[PublicInstance]:
-    """Read the official Invidious instance directory and return usable HTTPS candidates.
-
-    The directory's `api` field is treated as a hint, not as the final health check.
-    Some instance metadata can change between directory refreshes, so auto selection
-    probes the actual video API before choosing a server.
-    """
+    """Read the official Invidious instance directory and return usable HTTPS candidates."""
     req = urllib.request.Request(
         directory_url,
         headers={
@@ -189,12 +186,7 @@ def auto_select_client(
     probe_video_id: str = DEFAULT_PROBE_VIDEO_ID,
     max_candidates: int = 8,
 ) -> tuple[InvidiousClient, list[str]]:
-    """Select the first official public instance whose video API actually works.
-
-    Returns `(client, diagnostics)`. A manually supplied instance should bypass this
-    function so research runs can remain pinned to one backend when repeatability is
-    more important than convenience.
-    """
+    """Select the first official public instance whose video API actually works."""
     candidates = discover_public_instances(
         directory_url=directory_url,
         timeout=min(max(timeout, 1.0), 10.0),
