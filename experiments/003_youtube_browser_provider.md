@@ -50,136 +50,64 @@ The older Invidious provider remains available with:
 --provider invidious
 ```
 
-## Live validation #1 — Windows, query `bán nhà bình chánh`
+## Live validation #1 — selector failure
 
-Observed output:
+Query: `bán nhà bình chánh`
+
+Observed:
 
 ```text
-Provider: YouTube browser (headless, channel=auto, region=VN)
-WARN provider failed for bts4RmP0KZw: No Watch Next recommendation cards found for bts4RmP0KZw
-WARN provider failed for yB-Ured3k1U: No Watch Next recommendation cards found for yB-Ured3k1U
-WARN provider failed for WRDNuj9GAZA: No Watch Next recommendation cards found for WRDNuj9GAZA
-WARN provider failed for oXcLKbjQIFQ: No Watch Next recommendation cards found for oXcLKbjQIFQ
-WARN provider failed for DgTJ9Q7igU4: No Watch Next recommendation cards found for DgTJ9Q7igU4
-WARN provider failed for J7dA-qYHh18: No Watch Next recommendation cards found for J7dA-qYHh18
-WARN provider failed for Sj_QlYZpZAE: No Watch Next recommendation cards found for Sj_QlYZpZAE
-WARN provider failed for 9X8bpuRbSUM: No Watch Next recommendation cards found for 9X8bpuRbSUM
-crawl complete: run_id=1
-RUN #1 | query='bán nhà bình chánh' | status=done
 videos=8 edges=0 sources=0 communities=8
 ```
 
-Interpretation:
+Search seed extraction succeeded, but all Watch Next lookups failed because the first implementation depended on classic `ytd-compact-video-renderer` selectors.
 
-- Search seed extraction succeeded: 8 real YouTube video IDs were discovered from the query.
-- The browser successfully navigated far enough that the provider attempted each seed watch page.
-- Watch Next extraction failed for all 8 seed videos.
-- Therefore `edges=0` and `sources=0`; no recommendation graph was observed.
-- The 8 reported communities are singleton seed nodes only and are not meaningful audience/recommendation communities.
-- `status=done` is misleading for this run because the crawler currently tolerates provider failures per source and still closes the run as done. A later revision should distinguish `done`, `partial`, and `failed/no_edges`.
-
-## Root-cause confirmation
-
-The next headed run visually showed normal recommendation videos beside/below the playing YouTube video while the provider still reported `No Watch Next recommendation cards found`.
-
-This confirms the root cause as **selector drift**, not absence of recommendations and not an anti-bot page.
-
-The first implementation depended on classic:
-
-```text
-ytd-watch-next-secondary-results-renderer ytd-compact-video-renderer
-#related ytd-compact-video-renderer
-ytd-compact-video-renderer
-```
-
-That assumption is no longer safe for the current YouTube layout.
+A headed run visually confirmed that recommendation videos were present, proving selector drift rather than absence of recommendations or an anti-bot page.
 
 ## Watch Next v2 fix
 
-The provider now treats the stable signal as a normal YouTube watch link:
+The provider now treats normal YouTube watch links (`/watch?v=VIDEO_ID`) inside recommendation/secondary areas as the stable extraction signal rather than depending on one renderer tag. It supports current lockup-style layout plus classic compact renderers and prints DOM diagnostics if extraction fails.
+
+## Live validation #2 — Windows, Watch Next v2
+
+Query: `bán nhà bình chánh`
+
+Observed:
 
 ```text
-/watch?v=VIDEO_ID
+Provider: YouTube browser (headless, channel=auto, region=VN)
+crawl complete: run_id=4
+RUN #4 | query='bán nhà bình chánh' | status=done
+videos=267 edges=500 sources=45 communities=15
 ```
 
-inside the recommendation/secondary area rather than depending on one renderer tag.
+This satisfies the transport/extraction success criteria by a wide margin:
 
-Preference order:
+- search seed discovery works;
+- Watch Next extraction works in headless mode;
+- 500 directed recommendation edges were observed;
+- 45 distinct source watch pages produced recommendations;
+- repeated targets occur across many source pages (top target appeared from 23 sources);
+- graph/community analysis completes on real observations.
 
-```text
-#related
--> ytd-watch-next-secondary-results-renderer
--> #secondary
-```
+### Important quality finding
 
-Fallback support includes both:
+The highest-indegree targets include broad current-affairs, entertainment, finance, and other videos not directly related to the search topic. Examples include current news, military/geopolitical coverage, entertainment, and banking/interest-rate content.
 
-```text
-yt-lockup-view-model
-ytd-compact-video-renderer
-```
+This means **BrowserProvider extraction is technically proven, but the raw depth-1 graph must not yet be interpreted as a clean audience-expansion graph for the original topic**.
 
-If extraction still fails, the provider now prints DOM diagnostics with:
+The current Windows wrapper uses `--depth 1`. That causes recommendation targets from the original real-estate seed pages to be opened as new source pages, and their own recommendations are then added to the same graph. A generic/trending recommendation at depth 1 can therefore pull the crawl into a different topic and amplify it.
 
-- `#related` count;
-- `#secondary` count;
-- classic Watch Next renderer count;
-- compact renderer count;
-- lockup renderer count;
-- watch links under related/secondary;
-- total watch links on the page;
-- current URL and page title.
+A second source of possible noise is the persistent browser session: sequential navigation may allow session-level context to affect later Watch Next observations even without a signed-in account.
 
-That makes the next failure directly actionable instead of producing another blind selector guess.
+### Comparison warning
 
-## Next live validation
+Run #4 reports `compared_with_run=3`, but the current analyzer simply chooses the previous completed run. If run #3 used different parameters or had a failed/diagnostic graph, `growth=new` is not a valid temporal-growth measurement. Future comparisons must match query/provider/config and require a usable previous graph.
 
-```bat
-git pull
-.venv\Scripts\activate
-python -m pip install -e .
-run_windows.bat bán nhà bình chánh
-```
+## Result
 
-For a smaller visible validation:
+**EXTRACTION: PASS.**
 
-```bat
-python -m ytb_radar --db data\radar.db scan ^
-  --provider youtube ^
-  --headed ^
-  --query "bán nhà bình chánh" ^
-  --seed-limit 5 ^
-  --depth 0 ^
-  --recs 10 ^
-  --delay 1.5
-```
+**RAW GRAPH AS AUDIENCE-EXPANSION EVIDENCE: NOT YET VALIDATED.**
 
-## Success criteria
-
-PASS only if a real Windows run produces all of the following:
-
-- at least 5 search seed video IDs;
-- at least 5 source watch pages with extracted recommendations;
-- at least 30 total recommendation edges;
-- at least one recommendation target referenced by two or more distinct source videos;
-- analyzer completes without fabricated data.
-
-Stronger evidence would be repeated runs where major hubs/communities recur.
-
-## Failure modes to record
-
-- YouTube anti-bot/challenge page;
-- consent page not dismissed;
-- further DOM selector drift;
-- different Watch Next layout;
-- search returns Shorts/shelves instead of ordinary video cards;
-- excessive personalization makes repeated graphs unstable;
-- recommendation graph is too sparse to infer meaningful communities.
-
-## Status
-
-SEARCH: PASS.
-
-WATCH NEXT V1: FAIL — ROOT CAUSE CONFIRMED AS SELECTOR DRIFT.
-
-WATCH NEXT V2 GENERIC LINK EXTRACTION: IMPLEMENTED, LIVE VALIDATION PENDING.
+The next experiment must isolate direct recommendations from the original search seeds before recursive expansion is enabled.
