@@ -9,6 +9,48 @@ Experimental **YouTube recommendation graph radar**. It observes the real YouTub
 
 The project does **not** claim to reverse-engineer, predict, or guarantee YouTube recommendations. A browser observation means only: **this browser context saw B in Watch Next while viewing A at crawl time**.
 
+## One-command automatic run (Windows)
+
+After a cohort file exists at `cohorts\minecraft_sinh_ton.json`, run:
+
+```bat
+run_auto.bat
+```
+
+It automatically performs:
+
+```text
+fixed cohort scan
+    -> control: nhạc bolero trữ tình
+    -> control: bán nhà bình chánh
+    -> persistence
+    -> niche/control contrast
+    -> export files
+```
+
+The easiest file to read is always:
+
+```text
+reports\latest_summary.txt
+```
+
+Each run also creates a timestamped folder under `reports\auto\` containing:
+
+```text
+summary.txt
+manifest.json
+fixed_analysis.json
+persistence.json
+contrast.json
+control_*.json
+```
+
+Advanced use can override the defaults directly:
+
+```bat
+python auto_radar.py --control "nhạc bolero trữ tình" --control "bán nhà bình chánh"
+```
+
 ## Architecture
 
 ```text
