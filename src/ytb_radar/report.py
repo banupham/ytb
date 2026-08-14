@@ -22,16 +22,24 @@ def print_report(report: dict[str, Any]) -> None:
         f"videos={summary['videos']} edges={summary['edges']} "
         f"sources={summary['sources_crawled']} communities={summary['communities']}"
     )
+    print(
+        f"seeds_found={summary.get('seeds_found', 0)} "
+        f"seed_sources_success={summary.get('seed_sources_success', 0)} "
+        f"seed_sources_failed={summary.get('seed_sources_failed', 0)}"
+    )
     if report.get("previous_run_id"):
-        print(f"compared_with_run={report['previous_run_id']}")
+        print(f"compared_with_compatible_run={report['previous_run_id']}")
+    else:
+        print("growth_comparison=n/a (no earlier compatible run)")
 
     print("\nTOP RECOMMENDATION LEADERS")
     for idx, item in enumerate(report["recommendation_leaders"], start=1):
-        growth = (
-            "new"
-            if item["previous_recommended_by"] == 0
-            else f"{item['growth_pct']:+.1f}%"
-        )
+        if not report.get("previous_run_id"):
+            growth = "n/a"
+        elif item["previous_recommended_by"] == 0:
+            growth = "new"
+        else:
+            growth = f"{item['growth_pct']:+.1f}%"
         print(
             f"{idx:>2}. {item['recommended_by']:>3} refs | "
             f"rank={item['rank_score']:.2f} | bridge={item['bridge_score']:.2f} | "
