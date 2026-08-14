@@ -25,8 +25,9 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
         raise ValueError("No completed crawl run found")
 
     edges = store.fetch_edges(run_id)
-    videos = {v["video_id"]: v for v in store.fetch_videos_for_run(run_id)}
-    previous_id = store.previous_run_id(run_id)
+    run_videos = store.fetch_videos_for_run(run_id)
+    videos = {v["video_id"]: v for v in run_videos}
+    previous_id = store.previous_compatible_run_id(run_id)
     previous_edges = store.fetch_edges(previous_id) if previous_id is not None else []
 
     directed = nx.DiGraph()
@@ -52,9 +53,14 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
     leaders: list[dict[str, Any]] = []
     for video_id, count in indegree.items():
         meta = videos.get(video_id, {})
-        prev = previous_indegree.get(video_id, 0)
-        delta = count - prev
-        growth_pct = None if prev == 0 else round((delta / prev) * 100, 1)
+        if previous_id is None:
+            prev = None
+            delta = None
+            growth_pct = None
+        else:
+            prev = previous_indegree.get(video_id, 0)
+            delta = count - prev
+            growth_pct = None if prev == 0 else round((delta / prev) * 100, 1)
         leaders.append(
             {
                 "video_id": video_id,
@@ -82,6 +88,10 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
         reverse=True,
     )
 
+    seed_ids = {v["video_id"] for v in run_videos if v.get("role") == "seed"}
+    source_ids = {e["source_id"] for e in edges}
+    seed_source_success = seed_ids & source_ids
+
     run = store.get_run(run_id)
     return {
         "run": run,
@@ -90,7 +100,10 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
             "videos": len(videos),
             "edges": len(edges),
             "communities": len(communities),
-            "sources_crawled": len({e["source_id"] for e in edges}),
+            "sources_crawled": len(source_ids),
+            "seeds_found": len(seed_ids),
+            "seed_sources_success": len(seed_source_success),
+            "seed_sources_failed": len(seed_ids - seed_source_success),
         },
         "recommendation_leaders": leaders[:top_n],
         "bridge_candidates": bridge_videos[:top_n],
