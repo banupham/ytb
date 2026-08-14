@@ -29,6 +29,9 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
     videos = {v["video_id"]: v for v in run_videos}
     previous_id = store.previous_compatible_run_id(run_id)
     previous_edges = store.fetch_edges(previous_id) if previous_id is not None else []
+    previous_run_videos = (
+        store.fetch_videos_for_run(previous_id) if previous_id is not None else []
+    )
 
     directed = nx.DiGraph()
     for video_id, data in videos.items():
@@ -39,8 +42,22 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
     undirected = directed.to_undirected()
     community_map, communities = _communities(undirected, videos)
 
+    seed_ids = {v["video_id"] for v in run_videos if v.get("role") == "seed"}
+    source_ids = {e["source_id"] for e in edges}
+    seed_source_success = seed_ids & source_ids
+
+    previous_seed_ids = {
+        v["video_id"] for v in previous_run_videos if v.get("role") == "seed"
+    }
+    previous_source_ids = {e["source_id"] for e in previous_edges}
+    common_seed_ids = seed_ids & previous_seed_ids
+    comparable_source_ids = (
+        common_seed_ids & source_ids & previous_source_ids
+        if previous_id is not None
+        else set()
+    )
+
     indegree = Counter(edge["target_id"] for edge in edges)
-    previous_indegree = Counter(edge["target_id"] for edge in previous_edges)
     rank_score: defaultdict[str, float] = defaultdict(float)
     recommenders: defaultdict[str, set[str]] = defaultdict(set)
 
@@ -50,17 +67,44 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
         rank_score[target] += 1.0 / math.log2(rank + 1)
         recommenders[target].add(edge["source_id"])
 
+    current_common_indegree = Counter(
+        edge["target_id"]
+        for edge in edges
+        if edge["source_id"] in comparable_source_ids
+    )
+    previous_common_indegree = Counter(
+        edge["target_id"]
+        for edge in previous_edges
+        if edge["source_id"] in comparable_source_ids
+    )
+
     leaders: list[dict[str, Any]] = []
     for video_id, count in indegree.items():
         meta = videos.get(video_id, {})
-        if previous_id is None:
+        support_rate_pct = (
+            round((count / len(source_ids)) * 100, 1) if source_ids else 0.0
+        )
+
+        if previous_id is None or not comparable_source_ids:
             prev = None
+            current_comparable = None
             delta = None
             growth_pct = None
+            comparison_status = "n/a"
         else:
-            prev = previous_indegree.get(video_id, 0)
-            delta = count - prev
-            growth_pct = None if prev == 0 else round((delta / prev) * 100, 1)
+            current_comparable = current_common_indegree.get(video_id, 0)
+            prev = previous_common_indegree.get(video_id, 0)
+            delta = current_comparable - prev
+            if current_comparable == 0 and prev == 0:
+                growth_pct = None
+                comparison_status = "outside-common"
+            elif prev == 0:
+                growth_pct = None
+                comparison_status = "new"
+            else:
+                growth_pct = round((delta / prev) * 100, 1)
+                comparison_status = "changed"
+
         leaders.append(
             {
                 "video_id": video_id,
@@ -68,10 +112,13 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
                 "author": meta.get("author"),
                 "view_count": meta.get("view_count"),
                 "recommended_by": count,
+                "support_rate_pct": support_rate_pct,
                 "rank_score": round(rank_score[video_id], 3),
                 "previous_recommended_by": prev,
+                "comparable_current_recommended_by": current_comparable,
                 "delta": delta,
                 "growth_pct": growth_pct,
+                "comparison_status": comparison_status,
                 "community": community_map.get(video_id),
                 "bridge_score": round(_bridge_score(video_id, undirected, community_map), 3),
             }
@@ -88,11 +135,19 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
         reverse=True,
     )
 
-    seed_ids = {v["video_id"] for v in run_videos if v.get("role") == "seed"}
-    source_ids = {e["source_id"] for e in edges}
-    seed_source_success = seed_ids & source_ids
-
     run = store.get_run(run_id)
+    seed_union = seed_ids | previous_seed_ids
+    seed_jaccard_pct = (
+        round((len(common_seed_ids) / len(seed_union)) * 100, 1)
+        if previous_id is not None and seed_union
+        else None
+    )
+    seed_overlap_current_pct = (
+        round((len(common_seed_ids) / len(seed_ids)) * 100, 1)
+        if previous_id is not None and seed_ids
+        else None
+    )
+
     return {
         "run": run,
         "previous_run_id": previous_id,
@@ -104,6 +159,20 @@ def analyze(store: RadarStore, run_id: int | None = None, top_n: int = 20) -> di
             "seeds_found": len(seed_ids),
             "seed_sources_success": len(seed_source_success),
             "seed_sources_failed": len(seed_ids - seed_source_success),
+            "seed_fill_pct": (
+                round((len(seed_ids) / int(run.get("seed_limit") or 1)) * 100, 1)
+                if run
+                else None
+            ),
+            "previous_seeds_found": (
+                len(previous_seed_ids) if previous_id is not None else None
+            ),
+            "seed_overlap": (
+                len(common_seed_ids) if previous_id is not None else None
+            ),
+            "seed_overlap_current_pct": seed_overlap_current_pct,
+            "seed_jaccard_pct": seed_jaccard_pct,
+            "comparable_seed_sources": len(comparable_source_ids),
         },
         "recommendation_leaders": leaders[:top_n],
         "bridge_candidates": bridge_videos[:top_n],
