@@ -128,7 +128,11 @@ class YouTubeBrowserProvider:
     def _goto(self, url: str) -> None:
         self._start()
         try:
-            self._page.goto(url, wait_until="domcontentloaded", timeout=max(1000, int(self.timeout * 1000)))
+            self._page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=max(1000, int(self.timeout * 1000)),
+            )
             self._dismiss_consent_if_present()
             self._detect_block_page()
         except ProviderError:
@@ -137,7 +141,6 @@ class YouTubeBrowserProvider:
             raise ProviderError(f"Browser navigation failed for {url}: {exc}") from exc
 
     def _dismiss_consent_if_present(self) -> None:
-        # Best-effort only; button wording varies by locale/region.
         candidates = [
             "button:has-text('Reject all')",
             "button:has-text('Từ chối tất cả')",
@@ -188,7 +191,9 @@ class YouTubeBrowserProvider:
         self._goto(self._url("/results", {"search_query": query}))
         selector = "ytd-video-renderer"
         try:
-            self._page.locator(selector).first.wait_for(state="attached", timeout=max(1500, int(self.timeout * 1000)))
+            self._page.locator(selector).first.wait_for(
+                state="attached", timeout=max(1500, int(self.timeout * 1000))
+            )
         except Exception:
             self._detect_block_page()
             raise ProviderError(f"YouTube search returned no video results for query: {query}")
@@ -204,10 +209,17 @@ class YouTubeBrowserProvider:
                 video_id = extract_video_id(href)
                 if not video_id or video_id in seen:
                     continue
-                title = (title_link.get_attribute("title") or title_link.inner_text() or "").strip()
+                title = (
+                    title_link.get_attribute("title")
+                    or title_link.inner_text()
+                    or ""
+                ).strip()
                 author = None
                 try:
-                    author = (card.locator("ytd-channel-name a").first.inner_text(timeout=700) or "").strip() or None
+                    author = (
+                        card.locator("ytd-channel-name a").first.inner_text(timeout=700)
+                        or ""
+                    ).strip() or None
                 except Exception:
                     pass
                 results.append(
@@ -223,8 +235,129 @@ class YouTubeBrowserProvider:
             except Exception:
                 continue
         if not results:
-            raise ProviderError(f"Could not extract YouTube video IDs from search results: {query}")
+            raise ProviderError(
+                f"Could not extract YouTube video IDs from search results: {query}"
+            )
         return results
+
+    def _wait_for_watch_next_links(self) -> None:
+        """Wait for any watch link inside the recommendation/secondary column.
+
+        YouTube has moved from `ytd-compact-video-renderer` to newer lockup view
+        models on some layouts. The stable signal we care about is therefore a
+        `/watch?v=` link inside the related/secondary area, not one renderer tag.
+        """
+        try:
+            self._page.wait_for_function(
+                """
+                () => Boolean(document.querySelector(
+                    '#related a[href*="/watch?v="], ' +
+                    'ytd-watch-next-secondary-results-renderer a[href*="/watch?v="], ' +
+                    '#secondary a[href*="/watch?v="], ' +
+                    'yt-lockup-view-model a[href*="/watch?v="], ' +
+                    'ytd-compact-video-renderer a[href*="/watch?v="]'
+                ))
+                """,
+                timeout=max(3000, min(int(self.timeout * 1000), 10000)),
+            )
+        except Exception:
+            # Extraction below emits useful selector diagnostics.
+            pass
+
+    def _watch_next_records(self) -> list[dict[str, Any]]:
+        """Extract recommendation-like watch links without depending on one renderer.
+
+        Preference order is #related, the classic Watch Next renderer, then the
+        secondary column. If YouTube changes the component tag but keeps normal
+        watch links, this still works.
+        """
+        return self._page.evaluate(
+            """
+            () => {
+              const rootSelectors = [
+                '#related',
+                'ytd-watch-next-secondary-results-renderer',
+                '#secondary'
+              ];
+
+              let root = null;
+              for (const selector of rootSelectors) {
+                const candidate = document.querySelector(selector);
+                if (candidate && candidate.querySelector('a[href*="/watch?v="]')) {
+                  root = candidate;
+                  break;
+                }
+              }
+
+              let anchors = [];
+              if (root) {
+                anchors = Array.from(root.querySelectorAll('a[href*="/watch?v="]'));
+              } else {
+                anchors = Array.from(document.querySelectorAll(
+                  'yt-lockup-view-model a[href*="/watch?v="], ' +
+                  'ytd-compact-video-renderer a[href*="/watch?v="], ' +
+                  'ytd-video-renderer a[href*="/watch?v="]'
+                ));
+              }
+
+              const records = [];
+              for (const anchor of anchors) {
+                const href = anchor.getAttribute('href');
+                if (!href) continue;
+
+                const card = anchor.closest(
+                  'yt-lockup-view-model, ' +
+                  'ytd-compact-video-renderer, ' +
+                  'ytd-video-renderer, ' +
+                  'ytd-rich-item-renderer, ' +
+                  'ytd-playlist-panel-video-renderer'
+                ) || anchor.parentElement;
+
+                const titleEl = card ? card.querySelector(
+                  'a#video-title, #video-title, h3 a, h3, ' +
+                  '.yt-lockup-metadata-view-model__title, ' +
+                  '[class*="lockup-metadata-view-model__title"]'
+                ) : null;
+                const authorEl = card ? card.querySelector(
+                  'ytd-channel-name a, #channel-name a, #channel-name, ' +
+                  'a[href^="/@"], a[href^="/channel/"]'
+                ) : null;
+
+                const title = (
+                  (titleEl && (titleEl.getAttribute('title') || titleEl.textContent)) ||
+                  anchor.getAttribute('title') ||
+                  anchor.getAttribute('aria-label') ||
+                  ''
+                ).trim();
+                const author = authorEl ? (authorEl.textContent || '').trim() : '';
+
+                records.push({href, title, author});
+              }
+              return records;
+            }
+            """
+        )
+
+    def _watch_next_diagnostics(self) -> dict[str, Any]:
+        try:
+            return self._page.evaluate(
+                """
+                () => ({
+                  related: document.querySelectorAll('#related').length,
+                  secondary: document.querySelectorAll('#secondary').length,
+                  classicWatchNext: document.querySelectorAll('ytd-watch-next-secondary-results-renderer').length,
+                  compactCards: document.querySelectorAll('ytd-compact-video-renderer').length,
+                  lockupCards: document.querySelectorAll('yt-lockup-view-model').length,
+                  relatedWatchLinks: document.querySelectorAll('#related a[href*="/watch?v="]').length,
+                  secondaryWatchLinks: document.querySelectorAll('#secondary a[href*="/watch?v="]').length,
+                  allWatchLinks: document.querySelectorAll('a[href*="/watch?v="]').length,
+                  pageTitle: document.title,
+                  url: location.href
+                })
+                """
+            )
+        except Exception as exc:
+            return {"diagnostic_error": str(exc)}
 
     def recommendations(
         self, video_id: str, limit: int = 20
@@ -235,17 +368,25 @@ class YouTubeBrowserProvider:
         author = None
         try:
             title = (
-                self._page.locator("ytd-watch-metadata h1 yt-formatted-string").first.inner_text(timeout=2500)
+                self._page.locator(
+                    "ytd-watch-metadata h1 yt-formatted-string"
+                ).first.inner_text(timeout=2500)
                 or video_id
             ).strip()
         except Exception:
             try:
-                title = (self._page.locator("h1 yt-formatted-string").first.inner_text(timeout=1000) or video_id).strip()
+                title = (
+                    self._page.locator("h1 yt-formatted-string")
+                    .first.inner_text(timeout=1000)
+                    or video_id
+                ).strip()
             except Exception:
                 pass
         try:
             author = (
-                self._page.locator("ytd-watch-metadata ytd-channel-name a").first.inner_text(timeout=1500)
+                self._page.locator(
+                    "ytd-watch-metadata ytd-channel-name a"
+                ).first.inner_text(timeout=1500)
                 or ""
             ).strip() or None
         except Exception:
@@ -259,69 +400,37 @@ class YouTubeBrowserProvider:
             "source": "youtube-browser-watch",
         }
 
-        selectors = [
-            "ytd-watch-next-secondary-results-renderer ytd-compact-video-renderer",
-            "#related ytd-compact-video-renderer",
-            "ytd-compact-video-renderer",
-        ]
-        cards = None
-        for selector in selectors:
-            locator = self._page.locator(selector)
-            try:
-                locator.first.wait_for(state="attached", timeout=3000)
-                if locator.count() > 0:
-                    cards = locator
-                    break
-            except Exception:
-                continue
-
-        if cards is None:
-            self._detect_block_page()
-            raise ProviderError(f"No Watch Next recommendation cards found for {video_id}")
+        self._wait_for_watch_next_links()
+        raw_records = self._watch_next_records()
 
         recs: list[dict[str, Any]] = []
         seen: set[str] = {video_id}
-        for card in cards.all():
+        for record in raw_records:
             if len(recs) >= limit:
                 break
-            try:
-                link = card.locator("a#thumbnail").first
-                href = link.get_attribute("href")
-                target_id = extract_video_id(href)
-                if not target_id or target_id in seen:
-                    continue
-                title_text = None
-                for title_selector in ("span#video-title", "#video-title"):
-                    try:
-                        title_text = (
-                            card.locator(title_selector).first.get_attribute("title")
-                            or card.locator(title_selector).first.inner_text(timeout=500)
-                        )
-                        if title_text:
-                            break
-                    except Exception:
-                        continue
-                rec_author = None
-                try:
-                    rec_author = (
-                        card.locator("ytd-channel-name a, #channel-name").first.inner_text(timeout=500)
-                        or ""
-                    ).strip() or None
-                except Exception:
-                    pass
-                recs.append(
-                    {
-                        "type": "video",
-                        "videoId": target_id,
-                        "title": (title_text or target_id).strip(),
-                        "author": rec_author,
-                        "source": "youtube-browser-watch-next",
-                    }
-                )
-                seen.add(target_id)
-            except Exception:
+            href = record.get("href")
+            target_id = extract_video_id(href)
+            if not target_id or target_id in seen:
                 continue
 
+            title_text = str(record.get("title") or "").strip()
+            rec_author = str(record.get("author") or "").strip() or None
+            recs.append(
+                {
+                    "type": "video",
+                    "videoId": target_id,
+                    "title": title_text or target_id,
+                    "author": rec_author,
+                    "source": "youtube-browser-watch-next",
+                }
+            )
+            seen.add(target_id)
+
         if not recs:
-            raise ProviderError(f"Watch Next rendered but no recommendation video IDs were extracted for {video_id}")
+            self._detect_block_page()
+            diagnostics = self._watch_next_diagnostics()
+            raise ProviderError(
+                f"Watch Next is visible but no recommendation video IDs were extracted "
+                f"for {video_id}. DOM diagnostics: {diagnostics}"
+            )
         return source, recs
