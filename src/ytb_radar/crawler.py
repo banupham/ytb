@@ -38,10 +38,13 @@ class RecommendationCrawler:
         return self.scan_seed_items(seeds, query=query)
 
     def scan_seed_items(self, seeds: list[dict[str, Any]], query: str | None = None) -> int:
+        provider_identity = str(
+            getattr(self.client, "run_identity", None) or self.client.base_url
+        )
         run_id = self.store.start_run(
             query=query,
             region=self.client.region,
-            instance=self.client.base_url,
+            instance=provider_identity,
             seed_limit=self.config.seed_limit,
             depth=self.config.depth,
             recs_per_video=self.config.recs_per_video,
