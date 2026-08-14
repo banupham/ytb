@@ -24,26 +24,36 @@ def print_report(report: dict[str, Any]) -> None:
     )
     print(
         f"seeds_found={summary.get('seeds_found', 0)} "
+        f"seed_fill={summary.get('seed_fill_pct', 0):.1f}% "
         f"seed_sources_success={summary.get('seed_sources_success', 0)} "
         f"seed_sources_failed={summary.get('seed_sources_failed', 0)}"
     )
     if report.get("previous_run_id"):
-        print(f"compared_with_compatible_run={report['previous_run_id']}")
+        print(
+            f"compared_with_compatible_run={report['previous_run_id']} "
+            f"seed_overlap={summary.get('seed_overlap', 0)} "
+            f"seed_jaccard={summary.get('seed_jaccard_pct', 0):.1f}% "
+            f"comparable_seed_sources={summary.get('comparable_seed_sources', 0)}"
+        )
     else:
         print("growth_comparison=n/a (no earlier compatible run)")
 
     print("\nTOP RECOMMENDATION LEADERS")
     for idx, item in enumerate(report["recommendation_leaders"], start=1):
-        if not report.get("previous_run_id"):
-            growth = "n/a"
-        elif item["previous_recommended_by"] == 0:
+        status = item.get("comparison_status")
+        if status == "new":
             growth = "new"
-        else:
+        elif status == "changed" and item.get("growth_pct") is not None:
             growth = f"{item['growth_pct']:+.1f}%"
+        elif status == "outside-common":
+            growth = "seed-shift"
+        else:
+            growth = "n/a"
         print(
             f"{idx:>2}. {item['recommended_by']:>3} refs | "
+            f"support={item.get('support_rate_pct', 0):>5.1f}% | "
             f"rank={item['rank_score']:.2f} | bridge={item['bridge_score']:.2f} | "
-            f"growth={growth:>8} | {item['title'][:80]}"
+            f"growth={growth:>10} | {item['title'][:80]}"
         )
 
     print("\nCOMMUNITIES")
